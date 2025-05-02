@@ -1,77 +1,54 @@
-### File: app.py
-from flask import Flask, request, jsonify
-from flask_pymongo import PyMongo
+from flask import Flask, render_template, request, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
-from datetime import datetime
-import os
 
 app = Flask(__name__)
 
-# Configuration
-app.config["MONGO_URI"] = "mongodb://mongo:27017/generaldb"
-app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:password@mysql/generaldb'
+# MySQL Database Configuration
+app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:password@localhost/userdata'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-# Database Clients
-mongo = PyMongo(app)
 db = SQLAlchemy(app)
 
-# Example SQL model (for MySQL)
-class LogEntry(db.Model):
+# Create a User Model
+class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    collection = db.Column(db.String(64))
-    operation = db.Column(db.String(32))
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    name = db.Column(db.String(100), nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
 
-@app.route('/data/<collection>', methods=['POST'])
-def create_data(collection):
-    data = request.json
-    inserted = mongo.db[collection].insert_one(data)
-    log = LogEntry(collection=collection, operation="CREATE")
-    db.session.add(log)
+    def __repr__(self):
+        return f"<User {self.name}>"
+
+# Home Route - Display Users and Add New User
+@app.route('/', methods=['GET', 'POST'])
+def home():
+    if request.method == 'POST':
+        name = request.form['name']
+        email = request.form['email']
+        new_user = User(name=name, email=email)
+        db.session.add(new_user)
+        db.session.commit()
+        return redirect(url_for('home'))
+    
+    users = User.query.all()
+    return render_template('index.html', users=users)
+
+# Edit User - Update User Info
+@app.route('/edit/<int:id>', methods=['GET', 'POST'])
+def edit(id):
+    user = User.query.get(id)
+    if request.method == 'POST':
+        user.name = request.form['name']
+        user.email = request.form['email']
+        db.session.commit()
+        return redirect(url_for('home'))
+    return render_template('edit.html', user=user)
+
+# Delete User
+@app.route('/delete/<int:id>', methods=['GET'])
+def delete(id):
+    user = User.query.get(id)
+    db.session.delete(user)
     db.session.commit()
-    return jsonify({"id": str(inserted.inserted_id)}), 201
-
-@app.route('/data/<collection>/<id>', methods=['GET'])
-def get_data(collection, id):
-    from bson.objectid import ObjectId
-    doc = mongo.db[collection].find_one({"_id": ObjectId(id)})
-    if not doc:
-        return jsonify({"error": "Not found"}), 404
-    doc['_id'] = str(doc['_id'])
-    return jsonify(doc)
-
-@app.route('/data/<collection>', methods=['GET'])
-def list_data(collection):
-    docs = mongo.db[collection].find()
-    result = []
-    for doc in docs:
-        doc['_id'] = str(doc['_id'])
-        result.append(doc)
-    return jsonify(result)
-
-@app.route('/data/<collection>/<id>', methods=['PUT'])
-def update_data(collection, id):
-    from bson.objectid import ObjectId
-    update = request.json
-    result = mongo.db[collection].update_one({"_id": ObjectId(id)}, {"$set": update})
-    if result.matched_count == 0:
-        return jsonify({"error": "Not found"}), 404
-    log = LogEntry(collection=collection, operation="UPDATE")
-    db.session.add(log)
-    db.session.commit()
-    return jsonify({"updated": True})
-
-@app.route('/data/<collection>/<id>', methods=['DELETE'])
-def delete_data(collection, id):
-    from bson.objectid import ObjectId
-    result = mongo.db[collection].delete_one({"_id": ObjectId(id)})
-    if result.deleted_count == 0:
-        return jsonify({"error": "Not found"}), 404
-    log = LogEntry(collection=collection, operation="DELETE")
-    db.session.add(log)
-    db.session.commit()
-    return jsonify({"deleted": True})
+    return redirect(url_for('home'))
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(debug=True)
